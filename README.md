@@ -1,4 +1,7 @@
+[原仓库](https://github.com/caiyuanhao1998/Retinexformer?tab=readme-ov-file)
+
 # 实验结果
+
 - Results on LOL-v1, LOL-v2-real, LOL-v2-synthetic, SID, SMID, SDSD-in, SDSD-out, and MIT Adobe FiveK datasets can be downloaded from [Baidu Disk](https://pan.baidu.com/s/1DC6A-I9S7yJ-pmMVTLAHaw?pwd=cyh2) (code: `cyh2`) or [Google Drive](https://drive.google.com/drive/folders/1UCpHh3MkV4bxzWgiiULnb3BOPWS_8crP?usp=drive_link)
 
 - Results on LOL-v1, LOL-v2-real, and LOL-v2-synthetic datasets with the same test setting as KinD, LLFlow, and recent diffusion models can be downloaded from [Baidu Disk](https://pan.baidu.com/s/1Kbq9pASf1O_0Y9QMc88obQ?pwd=cyh2) (code: `cyh2`) or [Google Drive](https://drive.google.com/drive/folders/1_ugNFblIYOCIam4cVJiXVX1aBGEYhn1o?usp=drive_link).
@@ -56,7 +59,7 @@ Linux：
 
 ```
 # 0) 在项目根目录
-cd /Retinexformer
+cd /workspace/Retinexformer
 
 # 1) 安装下载/解压工具
 pip install -U gdown
@@ -300,8 +303,25 @@ unzip -o smid.zip
 
 4、测试
 
-- 下载在不同训练集上的[模型权重](https://drive.google.com/drive/folders/1ynK5hfQachzc8y96ZumhkPPDXzHJwaQV?usp=drive_link)，放到`./pretrained_weights`，命令如下
+- 下载在不同训练集上的[模型权重](https://drive.google.com/drive/folders/1ynK5hfQachzc8y96ZumhkPPDXzHJwaQV?usp=drive_link)，放到`./pretrained_weights`
+
+  ```
+  # linux
+  cd /workspace/Retinexformer
+  pip install -U gdown
+  mkdir -p pretrained_weights
+  # 下载
+  gdown --folder "https://drive.google.com/drive/folders/1ynK5hfQachzc8y96ZumhkPPDXzHJwaQV?usp=drive_link" -O pretrained_weights
+  # 查看
+  ls pretrained_weights
+  
+  ```
+
+  
+
 - Self-ensemble策略：使得结果更好，只需要加上`--self_ensemble`
+
+测试命令
 
 ```shell
 # activate the environment
