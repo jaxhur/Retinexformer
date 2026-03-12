@@ -24,10 +24,15 @@
 1、配置环境
 
 ```shell
-conda create -n Retinexformer python=3.7
+conda create -n Retinexformer python=3.7 -y
 conda activate Retinexformer
 
 conda install pytorch=1.11 torchvision cudatoolkit=11.3 -c pytorch
+# 这一步可能报错
+# Retinexformer) root@C.32741530:/workspace$ python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.version.cuda)" Traceback (most recent call last): File "<string>", line 1, in <module> File "/venv/Retinexformer/lib/python3.7/site-packages/torch/__init__.py", line 199, in <module> from torch._C import * # noqa: F403 ImportError: /venv/Retinexformer/lib/python3.7/site-packages/torch/lib/libtorch_cpu.so: undefined symbol: iJIT_NotifyEvent
+# 如果报错则安装 conda install "mkl=2024.0" -y
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.version.cuda)"
+
 pip install matplotlib scikit-learn scikit-image opencv-python yacs joblib natsort h5py tqdm tensorboard
 pip install einops gdown addict future lmdb numpy pyyaml requests scipy yapf lpips
 ```
@@ -35,6 +40,9 @@ pip install einops gdown addict future lmdb numpy pyyaml requests scipy yapf lpi
 2、安装BasicSR
 
 ```shell
+git clone https://github.com/jaxhur/Retinexformer.git
+
+cd /workspace/Retinexformer
 python setup.py develop --no_cuda_ext
 ```
 
@@ -299,7 +307,7 @@ unzip -o smid.zip
 ```
 
 
- 
+
 
 4、测试
 
@@ -419,7 +427,6 @@ python3 basicsr/train.py --opt Options/RetinexFormer_SDSD_outdoor.yml
 # FiveK
 python3 basicsr/train.py --opt Options/RetinexFormer_FiveK.yml
 ```
-
 
 
 
