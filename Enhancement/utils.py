@@ -150,10 +150,17 @@ def model_complexity(test_model, H=256, W=256, C=3, N=1):
     was_training = model.training
     model.eval()
     inputs = torch.randn((N, C, H, W), device=device)
-    with torch.no_grad():
-        operations, _ = profile(model, inputs=(inputs,), verbose=False)
-    if was_training:
-        model.train()
+    try:
+        with torch.no_grad():
+            operations, _ = profile(model, inputs=(inputs,), verbose=False)
+    finally:
+        # Some THOP releases leave CPU bookkeeping buffers on a CUDA model.
+        # Remove only THOP-owned buffers so DataParallel can run inference.
+        for module in model.modules():
+            module._buffers.pop('total_ops', None)
+            module._buffers.pop('total_params', None)
+        if was_training:
+            model.train()
 
     params = sum(parameter.numel() for parameter in model.parameters())
     return {

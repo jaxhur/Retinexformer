@@ -1,8 +1,6 @@
 [原仓库](https://github.com/caiyuanhao1998/Retinexformer?tab=readme-ov-file)
 
-
-
-# 原论文
+# Retinexformer原论文
 
 <img src="img/README_img/pipeline.png" alt="pipeline" style="zoom: 80%;" />
 
@@ -37,15 +35,13 @@ pip install --no-cache-dir "lmdb==1.4.1"
 安装BasicSR
 
 ```shell
-
-
 cd /workspace/Retinexformer
 python setup.py develop --no_cuda_ext
 ```
 
 
 
-新配置
+40系列：cuda=11.8
 
 ```
 git clone https://github.com/jaxhur/Retinexformer.git
@@ -58,11 +54,43 @@ conda install pytorch==2.3.1 torchvision==0.18.1 pytorch-cuda=11.8 -c pytorch -c
 pip install matplotlib scikit-learn scikit-image opencv-python yacs joblib natsort h5py tqdm tensorboard
 pip install einops gdown addict future lmdb numpy pyyaml requests scipy yapf lpips thop
 
+
 # 验证GPU
 python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 
 
+cd ./Retinexformer
 python setup.py develop --no_cuda_ext
+```
+
+```
+pip uninstall -y torch torchvision torchaudio
+pip install torch==2.3.1 torchvision==0.18.1 torchaudio==2.3.1 --index-url https://download.pytorch.org/whl/cu118
+```
+
+50系列：CUDA 13.0+
+
+```
+git clone https://github.com/jaxhur/Retinexformer.git
+
+conda create -n retinex50 python=3.10 -y
+conda activate retinex50
+
+pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
+
+pip install matplotlib scikit-learn scikit-image opencv-python yacs joblib natsort h5py tqdm tensorboard
+pip install einops gdown addict future lmdb numpy pyyaml requests scipy yapf lpips thop
+
+# 验证GPU
+python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+
+cd ./Retinexformer
+python setup.py develop --no_cuda_ext
+```
+
+```
+pip uninstall -y torch torchvision torchaudio
+pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cu130
 ```
 
 
@@ -70,6 +98,7 @@ python setup.py develop --no_cuda_ext
 # 数据集
 
 ```
+apt install -y unzip
 cd ./data
 # LOL-v1
 gdown "https://drive.google.com/uc?id=1mAN3ll5wWwt1Xz0C7uio31-NJu-50S8Z"
@@ -99,23 +128,6 @@ cd ../
   ```
 
 - Self-ensemble策略：使得结果更好，只需要加上`--self_ensemble`
-
-测试命令
-
-```shell
-# activate the environment
-conda activate Retinexformer
-
-# LOL-v1
-python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v1.yml --weights experiments/RetinexFormer_LOL_v1/models/best_G.pth --dataset LOL-v1
-
-# LOL-v2-real
-python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_real.yml --weights experiments/RetinexFormer_LOL_v2_real/models/best_G.pth --dataset LOL-v2-real
-
-# LOL-v2-synthetic
-python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml --weights experiments/RetinexFormer_LOL_v2_synthetic/models/best_G.pth --dataset LOL-v2-syn
-
-```
 
 <img src="img/README_img/image-20260312235645304.png" alt="image-20260312235645304" style="zoom:80%;" />
 
@@ -160,7 +172,7 @@ conda activate Retinexformer
 python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v1.yml
 
 # LOL-v2-real
-python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_real.yml
+
 
 # LOL-v2-synthetic
 python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml
@@ -168,23 +180,60 @@ python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml
 
 
 
-<img src="img/README_img/image-20260313002535092.png" alt="image-20260313002535092" style="zoom:80%;" />
-
 
 
 # LOLv1
 
+训练：5080
 
+- 4h30min
+- ps=128
+- bs=8
+
+```
+python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v1.yml
+```
+
+测试
+
+```
+# LOL-v1
+python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v1.yml --weights experiments/RetinexFormer_LOL_v1/models/best_G.pth --dataset LOL-v1
+
+# LOL-v2-synthetic
+python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml --weights experiments/RetinexFormer_LOL_v2_synthetic/models/best_G.pth --dataset LOL-v2-syn
+
+```
 
 
 
 # LOLv2-real
 
+训练
 
+- ps=128、bs=8竟然会爆显存？
+- 
+
+```
+python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_real.yml
+```
+
+测试
+
+```
+# LOL-v2-real
+python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_real.yml --weights experiments/RetinexFormer_LOL_v2_real/models/best_G.pth --dataset LOL-v2-real
+```
 
 
 
 # LOLv2-syn
 
+训练
 
+测试
+
+```
+
+```
 
