@@ -1,5 +1,9 @@
 # ignored folders
-/data
+# Keep the data root available for lightweight project assets, but exclude LOL datasets.
+/data/LOLv1/
+/data/LOLv2/
+/data/LOL-v1/
+/data/LOL-v2/
 experiments
 results
 tb_logger
