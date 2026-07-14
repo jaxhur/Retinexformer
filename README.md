@@ -37,7 +37,7 @@ pip install --no-cache-dir "lmdb==1.4.1"
 安装BasicSR
 
 ```shell
-git clone https://github.com/jaxhur/Retinexformer.git
+
 
 cd /workspace/Retinexformer
 python setup.py develop --no_cuda_ext
@@ -45,65 +45,42 @@ python setup.py develop --no_cuda_ext
 
 
 
+新配置
+
+```
+git clone https://github.com/jaxhur/Retinexformer.git
+
+conda create -n Retinexformer python=3.10 -y
+conda activate Retinexformer
+
+conda install pytorch==2.3.1 torchvision==0.18.1 pytorch-cuda=11.8 -c pytorch -c nvidia -y
+
+pip install matplotlib scikit-learn scikit-image opencv-python yacs joblib natsort h5py tqdm tensorboard
+pip install einops gdown addict future lmdb numpy pyyaml requests scipy yapf lpips thop
+
+# 验证GPU
+python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+
+
+python setup.py develop --no_cuda_ext
+```
+
 
 
 # 数据集
 
-- [LOL-v1](https://drive.google.com/file/d/1L-kqSQyrmMueBh_ziWoPFhfsAh50h20H/view?usp=sharing)
-- [LOL-v2](https://drive.google.com/file/d/1Ou9EljYZW8o5dbDCf9R34FS8Pd8kEp2U/view?usp=sharing)
-
-Linux：
-
 ```
-# 0) 在项目根目录
-cd /workspace/Retinexformer
+cd ./data
+# LOL-v1
+gdown "https://drive.google.com/uc?id=1mAN3ll5wWwt1Xz0C7uio31-NJu-50S8Z"
+# LOL-v2重命名
+gdown "https://drive.google.com/uc?id=1L0UnJg6gZ4Eb7It2EuNxP0L3lQNmKMaP"
 
-# 1) 安装解压工具
-sudo apt-get install -y unzip p7zip-full
+unzip LOL-v1.zip -d LOL-v1
+unzip LOL-v2-renamed.zip -d LOL-v2
 
-
-# 2) 建目录
-mkdir -p data/SMID data/SDSD data/LOLv1 data/LOLv2 data/SID data/FiveK
-# 下载数据
-# LOL-v1 (单文件)
-gdown --fuzzy "https://drive.google.com/file/d/1L-kqSQyrmMueBh_ziWoPFhfsAh50h20H/view?usp=sharing" -O data/LOLv1/LOLv1.zip
-
-# LOL-v2 (单文件)
-gdown --fuzzy "https://drive.google.com/file/d/1Ou9EljYZW8o5dbDCf9R34FS8Pd8kEp2U/view?usp=sharing" -O data/LOLv2/LOLv2.zip
-
-# SID (文件夹)
-gdown --folder "https://drive.google.com/drive/folders/1eQ-5Z303sbASEvsgCBSDbhijzLTWQJtR?usp=share_link&pli=1" -O data/SID
-
-# SMID (文件夹，含分卷压缩)
-gdown --folder "https://drive.google.com/drive/folders/1OV4XgVhipsRqjbp8SYr-4Rpk3mPwvdvG" -O data/SMID
-
-# SDSD-indoor/outdoor (同一个文件夹，含分卷压缩)
-gdown --folder "https://drive.google.com/drive/folders/14TF0f9YQwZEntry06M93AMd70WH00Mg6" -O data/SDSD
-
-# FiveK (单文件)
-gdown --fuzzy "https://drive.google.com/file/d/11HEUmchFXyepI4v3dhjnDnmhW_DgwfRR/view?usp=sharing" -O data/FiveK/FiveK.zip
-
-# README要求的 text_list.txt
-mkdir -p data/SMID/SMID_Long_np
-gdown --fuzzy "https://drive.google.com/file/d/199qrfizUeZfgq3qVjrM74mZ_nlacgwiP/view?usp=sharing" -O data/SMID/SMID_Long_np/text_list.txt
-
-
-
-# 分卷解压
-cd /workspace/Retinexformer/data/LOLv1
-unzip -o LOLv1.zip
-mv /workspace/Retinexformer/data/LOLv1/LOLv1/* /workspace/Retinexformer/data/LOLv1/
-
-
-cd data/SMID
-unzip -o smid.zip
-```
-
-目录结构：
-
-
-```
-
+rm LOL-v1.zip LOL-v2-renamed.zip
+cd ../
 ```
 
 
