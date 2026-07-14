@@ -211,7 +211,12 @@ class BaseModel():
         ]
 
     @master_only
-    def save_network(self, net, net_label, current_iter, param_key='params'):
+    def save_network(self,
+                     net,
+                     net_label,
+                     current_iter,
+                     param_key='params',
+                     save_filename=None):
         """Save networks.
 
         Args:
@@ -220,10 +225,13 @@ class BaseModel():
             current_iter (int): Current iter number.
             param_key (str | list[str]): The parameter key(s) to save network.
                 Default: 'params'.
+            save_filename (str | None): Optional explicit filename under the
+                model directory. When omitted, use the original naming rule.
         """
         if current_iter == -1:
             current_iter = 'latest'
-        save_filename = f'{net_label}_{current_iter}.pth'
+        if save_filename is None:
+            save_filename = f'{net_label}_{current_iter}.pth'
         save_path = os.path.join(self.opt['path']['models'], save_filename)
 
         net = net if isinstance(net, list) else [net]
@@ -337,7 +345,7 @@ class BaseModel():
             if self.opt['is_train'] and self.opt.get('use_amp', False):
                 state['amp_scaler'] = self.amp_scaler.state_dict()
             save_filename = f'{current_iter}.state'
-            save_path = os.path.join(self.opt['path']['training_states'],
+            save_path = os.path.join(self.opt['path']['training_state'],
                                      save_filename)
             torch.save(state, save_path)
 

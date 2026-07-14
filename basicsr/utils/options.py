@@ -69,9 +69,10 @@ def parse(opt_path, is_train=True):
                                     opt['name'])
         opt['path']['experiments_root'] = experiments_root
         opt['path']['models'] = osp.join(experiments_root, 'models')
-        opt['path']['training_states'] = osp.join(experiments_root,
-                                                  'training_states')
-        opt['path']['log'] = experiments_root
+        opt['path']['training_state'] = osp.join(experiments_root,
+                                                 'training_state')
+        # Keep all text logs within the experiment directory for each dataset.
+        opt['path']['log'] = osp.join(experiments_root, 'logs')
         opt['path']['visualization'] = osp.join(experiments_root,
                                                 'visualization')
 

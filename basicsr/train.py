@@ -3,6 +3,7 @@ import datetime
 import logging
 import math
 import os
+from glob import glob
 
 import random
 import time
@@ -71,10 +72,8 @@ def init_loggers(opt):
                         f"metric.csv")
     logger_metric = get_root_logger(logger_name='metric',
                                     log_level=logging.INFO, log_file=log_file)
-    metric_str = f'iter ({get_time_str()})'
-    for k, v in opt['val']['metrics'].items():
-        metric_str += f',{k}'
-    logger_metric.info(metric_str)
+    metric_header = 'iteration,' + ','.join(opt['val']['metrics'].keys())
+    logger_metric.info(metric_header)
 
     logger.info(get_env_info())
     logger.info(dict2str(opt))
@@ -91,6 +90,34 @@ def init_loggers(opt):
     if opt['logger'].get('use_tb_logger') and 'debug' not in opt['name']:
         tb_logger = init_tb_logger(log_dir=osp.join('tb_logger', opt['name']))
     return logger, tb_logger
+
+
+def _latest_numbered_file(directory, suffix):
+    """Return the highest numbered checkpoint with the requested suffix.
+
+    Files whose stem is not an integer are ignored so that unrelated files in
+    an experiment directory cannot interrupt automatic recovery.
+    """
+    candidates = []
+    for path in glob(osp.join(directory, f'*{suffix}')):
+        stem = osp.basename(path)[:-len(suffix)]
+        if stem.isdigit():
+            candidates.append((int(stem), path))
+    return max(candidates, default=(None, None))[1]
+
+
+def _find_resume_checkpoint(opt):
+    """Prefer full training state, then fall back to a generator-only weight."""
+    state_path = _latest_numbered_file(opt['path']['training_state'], '.state')
+    if state_path:
+        return state_path, None
+
+    models_dir = opt['path']['models']
+    latest_weight = osp.join(models_dir, 'latest_G.pth')
+    if osp.isfile(latest_weight):
+        return None, latest_weight
+
+    return None, _latest_numbered_file(models_dir, '_G.pth')
 
 
 def create_train_val_dataloader(opt, logger):  #train loader 和 val loader 一起构建
@@ -154,19 +181,13 @@ def main():
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
 
-    # automatic resume ..
-    state_folder_path = 'experiments/{}/training_states/'.format(opt['name']) #状态路径
-    import os
-    try:
-        states = os.listdir(state_folder_path)
-    except:
-        states = []
-
-    resume_state = None
-    if len(states) > 0: #如果路径已存在
-        max_state_file = '{}.state'.format(max([int(x[0:-6]) for x in states]))
-        resume_state = os.path.join(state_folder_path, max_state_file)
-        opt['path']['resume_state'] = resume_state
+    # Automatic resume prioritizes optimizer/scheduler state. If only a
+    # generator exists, load it as a documented weight-only recovery.
+    resume_state_path, resume_weight_path = _find_resume_checkpoint(opt)
+    if resume_state_path:
+        opt['path']['resume_state'] = resume_state_path
+    elif resume_weight_path:
+        opt['path']['pretrain_network_g'] = resume_weight_path
 
     # load resume states if necessary，resume_state是重新训练的时候接上的吗？
     if opt['path'].get('resume_state'):
@@ -179,7 +200,14 @@ def main():
 
     # mkdir for experiments and logger
     if resume_state is None:
-        make_exp_dirs(opt)
+        if resume_weight_path:
+            # Preserve an incomplete experiment instead of archiving the only
+            # usable generator checkpoint before it is loaded.
+            for path in (opt['path']['experiments_root'], opt['path']['models'],
+                         opt['path']['training_state'], opt['path']['log']):
+                os.makedirs(path, exist_ok=True)
+        else:
+            make_exp_dirs(opt)
         if opt['logger'].get('use_tb_logger') and 'debug' not in opt[
                 'name'] and opt['rank'] == 0:
             mkdir_and_rename2(
@@ -187,6 +215,10 @@ def main():
 
     # initialize loggers
     logger, tb_logger = init_loggers(opt)
+    if resume_weight_path and resume_state is None:
+        logger.warning(
+            'No training_state was found; loading generator weights only from '
+            f'{resume_weight_path}. Optimizer and scheduler states restart.')
 
     # create train and validation dataloaders
     result = create_train_val_dataloader(opt, logger)
@@ -202,6 +234,8 @@ def main():
         start_epoch = resume_state['epoch']
         current_iter = resume_state['iter']
         best_metric = resume_state['best_metric']
+        for metric in opt['val']['metrics']:
+            best_metric.setdefault(metric, 0)
         best_psnr = best_metric['psnr']
         best_iter = best_metric['iter']
         logger.info(f'best psnr: {best_psnr} from iteration {best_iter}')
@@ -324,17 +358,23 @@ def main():
                 rgb2bgr = opt['val'].get('rgb2bgr', True)
                 # wheather use uint8 image to compute metrics
                 use_image = opt['val'].get('use_image', True)
-                current_metric = model.validation(val_loader, current_iter, tb_logger,
-                                                  opt['val']['save_img'], rgb2bgr, use_image)
+                current_metrics = model.validation(val_loader, current_iter,
+                                                   tb_logger,
+                                                   opt['val']['save_img'],
+                                                   rgb2bgr, use_image)
                 # log cur metric to csv file
                 logger_metric = get_root_logger(logger_name='metric')
-                metric_str = f'{current_iter},{current_metric}'
+                metric_str = ','.join(
+                    [str(current_iter)] + [
+                        f'{current_metrics[name]:.6f}'
+                        for name in opt['val']['metrics']
+                    ])
                 logger_metric.info(metric_str)
 
-                # log best metric
-                if best_metric['psnr'] < current_metric:
-                    best_metric['psnr'] = current_metric
-                    # save best model
+                # PSNR is the sole best-checkpoint criterion; SSIM is tracked
+                # and logged with the same full validation pass.
+                if best_metric['psnr'] < current_metrics['psnr']:
+                    best_metric.update(current_metrics)
                     best_metric['iter'] = current_iter
                     model.save_best(best_metric)
                 if tb_logger:

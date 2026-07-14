@@ -315,15 +315,16 @@ class ImageCleanModel(BaseModel):
 
             cnt += 1
 
-        current_metric = 0.
         if with_metrics:
             for metric in self.metric_results.keys():
                 self.metric_results[metric] /= cnt
-                current_metric = self.metric_results[metric]
 
             self._log_validation_metric_values(current_iter, dataset_name,
                                                tb_logger)
-        return current_metric
+            # Keep all validation metrics so the training loop can select the
+            # best checkpoint by PSNR while still reporting SSIM.
+            return dict(self.metric_results)
+        return {}
 
     def _log_validation_metric_values(self, current_iter, dataset_name,
                                       tb_logger):
@@ -345,42 +346,27 @@ class ImageCleanModel(BaseModel):
         return out_dict
 
     def save(self, epoch, current_iter, **kwargs):
+        # Periodic checkpoints and the final checkpoint share the *_G.pth
+        # convention required by the standalone test script.
+        save_filename = ('latest_G.pth' if current_iter == -1 else
+                         f'{current_iter}_G.pth')
         if self.ema_decay > 0:
             self.save_network([self.net_g, self.net_g_ema],
-                              'net_g',
+                              'G',
                               current_iter,
-                              param_key=['params', 'params_ema'])
+                              param_key=['params', 'params_ema'],
+                              save_filename=save_filename)
         else:
-            self.save_network(self.net_g, 'net_g', current_iter)
+            self.save_network(self.net_g,
+                              'G',
+                              current_iter,
+                              save_filename=save_filename)
         self.save_training_state(epoch, current_iter, **kwargs)
 
     def save_best(self, best_metric, param_key='params'):
-        psnr = best_metric['psnr']
-        cur_iter = best_metric['iter']
-        save_filename = f'best_psnr_{psnr:.2f}_{cur_iter}.pth'
-        exp_root = self.opt['path']['experiments_root']
-        save_path = os.path.join(
-            self.opt['path']['experiments_root'], save_filename)
-
-        if not os.path.exists(save_path):
-            for r_file in glob.glob(f'{exp_root}/best_*'):
-                os.remove(r_file)
-            net = self.net_g
-
-            net = net if isinstance(net, list) else [net]
-            param_key = param_key if isinstance(
-                param_key, list) else [param_key]
-            assert len(net) == len(
-                param_key), 'The lengths of net and param_key should be the same.'
-
-            save_dict = {}
-            for net_, param_key_ in zip(net, param_key):
-                net_ = self.get_bare_model(net_)
-                state_dict = net_.state_dict()
-                for key, param in state_dict.items():
-                    if key.startswith('module.'):  # remove unnecessary 'module.'
-                        key = key[7:]
-                    state_dict[key] = param.cpu()
-                save_dict[param_key_] = state_dict
-
-            torch.save(save_dict, save_path)
+        """Overwrite the PSNR-selected generator checkpoint in ``models``."""
+        self.save_network(self.net_g,
+                          'G',
+                          best_metric['iter'],
+                          param_key=param_key,
+                          save_filename='best_G.pth')

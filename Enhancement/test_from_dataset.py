@@ -4,280 +4,266 @@
 # https://arxiv.org/abs/2303.06705
 # https://github.com/caiyuanhao1998/Retinexformer
 
-from ast import arg
-import numpy as np
-import os
+"""Evaluate one LOL checkpoint and write its complete reproducibility outputs."""
+
 import argparse
-from tqdm import tqdm
+import csv
+import os
+import sys
+
 import cv2
-
-import torch.nn as nn
+import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
+from tqdm import tqdm
+
 import utils
-
-from natsort import natsorted
-from glob import glob
-from skimage import img_as_ubyte
-from pdb import set_trace as stx
-from skimage import metrics
-
 from basicsr.models import create_model
-from basicsr.utils.options import dict2str, parse
+from basicsr.utils.options import parse
+
+
+IMAGE_EXTENSIONS = {'.bmp', '.jpeg', '.jpg', '.png', '.tif', '.tiff'}
+
 
 def self_ensemble(x, model):
-    def forward_transformed(x, hflip, vflip, rotate, model):
+    """Average the eight flip/rotation predictions used by the original test."""
+    def forward_transformed(input_, hflip, vflip, rotate):
         if hflip:
-            x = torch.flip(x, (-2,))
+            input_ = torch.flip(input_, (-2, ))
         if vflip:
-            x = torch.flip(x, (-1,))
+            input_ = torch.flip(input_, (-1, ))
         if rotate:
-            x = torch.rot90(x, dims=(-2, -1))
-        x = model(x)
+            input_ = torch.rot90(input_, dims=(-2, -1))
+        output = model(input_)
+        if isinstance(output, list):
+            output = output[-1]
         if rotate:
-            x = torch.rot90(x, dims=(-2, -1), k=3)
+            output = torch.rot90(output, dims=(-2, -1), k=3)
         if vflip:
-            x = torch.flip(x, (-1,))
+            output = torch.flip(output, (-1, ))
         if hflip:
-            x = torch.flip(x, (-2,))
-        return x
-    t = []
-    for hflip in [False, True]:
-        for vflip in [False, True]:
-            for rot in [False, True]:
-                t.append(forward_transformed(x, hflip, vflip, rot, model))
-    t = torch.stack(t)
-    return torch.mean(t, dim=0)
+            output = torch.flip(output, (-2, ))
+        return output
 
-parser = argparse.ArgumentParser(
-    description='Image Enhancement using Retinexformer')
-
-parser.add_argument('--input_dir', default='./Enhancement/Datasets',
-                    type=str, help='Directory of validation images')
-parser.add_argument('--result_dir', default='./results/',
-                    type=str, help='Directory for results')
-parser.add_argument('--output_dir', default='',
-                    type=str, help='Directory for output')
-parser.add_argument(
-    '--opt', type=str, default='Options/RetinexFormer_SDSD_indoor.yml', help='Path to option YAML file.')
-parser.add_argument('--weights', default='pretrained_weights/SDSD_indoor.pth',
-                    type=str, help='Path to weights')
-parser.add_argument('--dataset', default='SDSD_indoor', type=str,
-                    help='Test Dataset') 
-parser.add_argument('--gpus', type=str, default="0", help='GPU devices.')
-parser.add_argument('--GT_mean', action='store_true', help='Use the mean of GT to rectify the output of the model')
-parser.add_argument('--self_ensemble', action='store_true', help='Use self-ensemble to obtain better results')
-
-args = parser.parse_args()
-
-# 指定 gpu
-gpu_list = ','.join(str(x) for x in args.gpus)
-os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
-print('export CUDA_VISIBLE_DEVICES=' + gpu_list)
-
-####### Load yaml #######
-yaml_file = args.opt
-weights = args.weights
-print(f"dataset {args.dataset}")
-
-import yaml
-
-try:
-    from yaml import CLoader as Loader
-except ImportError:
-    from yaml import Loader
-
-opt = parse(args.opt, is_train=False)
-opt['dist'] = False
+    predictions = []
+    for hflip in (False, True):
+        for vflip in (False, True):
+            for rotate in (False, True):
+                predictions.append(forward_transformed(x, hflip, vflip, rotate))
+    return torch.stack(predictions).mean(dim=0)
 
 
-x = yaml.load(open(args.opt, mode='r'), Loader=Loader)
-s = x['network_g'].pop('type')
-##########################
+def _relative_key(path, root):
+    """Return a normalized, platform-independent key relative to ``root``."""
+    relative_path = os.path.relpath(path, root)
+    return os.path.normcase(os.path.normpath(relative_path)).replace('\\', '/')
 
 
-model_restoration = create_model(opt).net_g
+def _display_path(path):
+    """Format persisted paths with forward slashes on every platform."""
+    return os.path.abspath(path).replace('\\', '/')
 
-# 加载模型
-checkpoint = torch.load(weights)
 
-try:
-    model_restoration.load_state_dict(checkpoint['params'])
-except:
-    new_checkpoint = {}
-    for k in checkpoint['params']:
-        new_checkpoint['module.' + k] = checkpoint['params'][k]
-    model_restoration.load_state_dict(new_checkpoint)
+def _image_path_map(root):
+    """Map every image under a root directory to its normalized relative path."""
+    image_paths = {}
+    for directory, _, filenames in os.walk(root):
+        for filename in filenames:
+            path = os.path.join(directory, filename)
+            if os.path.splitext(filename)[1].lower() not in IMAGE_EXTENSIONS:
+                continue
+            key = _relative_key(path, root)
+            if key in image_paths:
+                raise ValueError(f'Duplicate normalized image key in {root}: {key}')
+            image_paths[key] = path
+    if not image_paths:
+        raise ValueError(f'No supported images found in {root}.')
+    return image_paths
 
-print("===>Testing using weights: ", weights)
-model_restoration.cuda()
-model_restoration = nn.DataParallel(model_restoration)
-model_restoration.eval()
 
-# 生成输出结果的文件
-factor = 4
-dataset = args.dataset
-config = os.path.basename(args.opt).split('.')[0]
-checkpoint_name = os.path.basename(args.weights).split('.')[0]
-result_dir = os.path.join(args.result_dir, dataset, config, checkpoint_name)
-result_dir_input = os.path.join(args.result_dir, dataset, 'input')
-result_dir_gt = os.path.join(args.result_dir, dataset, 'gt')
-output_dir = args.output_dir
-# stx()
-os.makedirs(result_dir, exist_ok=True)
-if args.output_dir != '':
-    os.makedirs(output_dir, exist_ok=True)
+def paired_image_paths(lq_root, gt_root):
+    """Pair LQ and GT images by normalized relative path and validate coverage."""
+    lq_paths = _image_path_map(lq_root)
+    gt_paths = _image_path_map(gt_root)
+    missing_lq = sorted(set(gt_paths) - set(lq_paths))
+    missing_gt = sorted(set(lq_paths) - set(gt_paths))
+    if missing_lq or missing_gt:
+        details = []
+        if missing_lq:
+            details.append(f'missing LQ ({len(missing_lq)}): {missing_lq[:3]}')
+        if missing_gt:
+            details.append(f'missing GT ({len(missing_gt)}): {missing_gt[:3]}')
+        raise ValueError('LQ/GT pairing failed; ' + '; '.join(details))
+    return [(key, lq_paths[key], gt_paths[key]) for key in sorted(lq_paths)]
 
-psnr = []
-ssim = []
-if dataset in ['SID', 'SMID', 'SDSD_indoor', 'SDSD_outdoor']:
-    os.makedirs(result_dir_input, exist_ok=True)
-    os.makedirs(result_dir_gt, exist_ok=True)
-    if dataset == 'SID':
-        from basicsr.data.SID_image_dataset import Dataset_SIDImage as Dataset
-    elif dataset == 'SMID':
-        from basicsr.data.SMID_image_dataset import Dataset_SMIDImage as Dataset
-    else:
-        from basicsr.data.SDSD_image_dataset import Dataset_SDSDImage as Dataset
-    opt = opt['datasets']['val']
-    opt['phase'] = 'test'
-    if opt.get('scale') is None:
-        opt['scale'] = 1
-    if '~' in opt['dataroot_gt']:
-        opt['dataroot_gt'] = os.path.expanduser('~') + opt['dataroot_gt'][1:]
-    if '~' in opt['dataroot_lq']:
-        opt['dataroot_lq'] = os.path.expanduser('~') + opt['dataroot_lq'][1:]
-    dataset = Dataset(opt)
-    print(f'test dataset length: {len(dataset)}')
-    dataloader = DataLoader(dataset=dataset, batch_size=1, shuffle=False)
+
+def create_lpips_metric(device, network):
+    """Create an LPIPS evaluator that accepts RGB tensors in the [-1, 1] range."""
+    try:
+        import lpips
+    except ImportError as exc:
+        raise ImportError(
+            'LPIPS evaluation requires the lpips package. Install it with '
+            '"pip install lpips".'
+        ) from exc
+    return lpips.LPIPS(net=network).to(device).eval()
+
+
+def run_model(input_, model, use_self_ensemble):
+    """Run one padded input through the model and unwrap multi-stage outputs."""
+    if use_self_ensemble:
+        return self_ensemble(input_, model)
+    output = model(input_)
+    return output[-1] if isinstance(output, list) else output
+
+
+def write_test_log(log_path, args, lq_root, gt_root, enhanced_root, metrics):
+    """Write the command context and final averages beside the metric CSV."""
+    with open(log_path, 'w', encoding='utf-8') as file:
+        file.write(f'Command: {" ".join(sys.argv)}\n')
+        file.write(f'Checkpoint: {_display_path(args.weights)}\n')
+        file.write(f'LQ root: {_display_path(lq_root)}\n')
+        file.write(f'GT root: {_display_path(gt_root)}\n')
+        file.write(f'Enhanced images: {_display_path(enhanced_root)}\n')
+        for name, value in metrics.items():
+            file.write(f'{name}: {value}\n')
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Image Enhancement evaluation for a paired LOL dataset')
+    parser.add_argument('--opt', required=True, type=str,
+                        help='Path to the LOL option YAML file.')
+    parser.add_argument('--weights', required=True, type=str,
+                        help='Explicit *_G.pth generator checkpoint for testing.')
+    parser.add_argument('--dataset', required=True, type=str,
+                        help='Stable output directory name, e.g. LOL-v1.')
+    parser.add_argument('--result_dir', default='./test_result', type=str,
+                        help='Parent directory for test results.')
+    parser.add_argument('--gpus', type=str, default='0',
+                        help='Single GPU device identifier.')
+    parser.add_argument('--GT_mean', action='store_true',
+                        help='Use GT mean to rectify output (not recommended).')
+    parser.add_argument('--self_ensemble', action='store_true',
+                        help='Use eight-way self-ensemble.')
+    parser.add_argument('--lpips_net', choices=('alex', 'vgg'), default='alex',
+                        help='LPIPS backbone recorded in metric.csv.')
+    parser.add_argument('--complexity_size', type=int, default=256,
+                        help='Square input size used for Params/TFLOPs statistics.')
+    args = parser.parse_args()
+
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpus
+    if not args.weights.endswith('_G.pth'):
+        raise ValueError('--weights must point to a generator checkpoint named *_G.pth.')
+    if not torch.cuda.is_available():
+        raise RuntimeError('This evaluation script requires one CUDA GPU.')
+    device = torch.device('cuda')
+    print(f'export CUDA_VISIBLE_DEVICES={args.gpus}')
+
+    opt = parse(args.opt, is_train=False)
+    opt['dist'] = False
+    model_restoration = create_model(opt).net_g.to(device)
+    checkpoint = torch.load(args.weights, map_location=device)
+    if 'params' not in checkpoint:
+        raise KeyError(f"Checkpoint {args.weights} does not contain the 'params' key.")
+    model_restoration.load_state_dict(checkpoint['params'], strict=True)
+    model_restoration = nn.DataParallel(model_restoration).eval()
+    print(f'===> Testing using weights: {args.weights}')
+
+    lq_root = opt['datasets']['val']['dataroot_lq']
+    gt_root = opt['datasets']['val']['dataroot_gt']
+    pairs = paired_image_paths(lq_root, gt_root)
+    print(f'Test dataset length: {len(pairs)}')
+
+    result_root = os.path.join(args.result_dir, args.dataset)
+    enhanced_root = os.path.join(result_root, 'enhanced')
+    os.makedirs(enhanced_root, exist_ok=True)
+    lpips_metric = create_lpips_metric(device, args.lpips_net)
+    complexity = utils.model_complexity(
+        model_restoration,
+        H=args.complexity_size,
+        W=args.complexity_size,
+        C=3,
+        N=1)
+
+    psnr_values, ssim_values, lpips_values = [], [], []
+    factor = 4
     with torch.inference_mode():
-        for data_batch in tqdm(dataloader):
-            torch.cuda.ipc_collect()
+        for relative_path, input_path, target_path in tqdm(pairs):
+            image = np.float32(utils.load_img(input_path)) / 255.
+            target = np.float32(utils.load_img(target_path)) / 255.
+            input_ = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(device)
+            target_tensor = torch.from_numpy(target).permute(2, 0, 1).unsqueeze(0).to(device)
+
+            # Pad to the model window and crop back before metric calculation.
+            _, _, height, width = input_.shape
+            padded_height = (height + factor - 1) // factor * factor
+            padded_width = (width + factor - 1) // factor * factor
+            input_padded = F.pad(input_, (0, padded_width - width, 0,
+                                          padded_height - height), 'reflect')
+            restored = run_model(input_padded, model_restoration, args.self_ensemble)
+            restored = torch.clamp(restored[:, :, :height, :width], 0, 1)
+
+            restored_image = restored.squeeze(0).permute(1, 2, 0).cpu().numpy()
+            if args.GT_mean:
+                # This setting follows KinD/LLFlow style evaluation but leaks
+                # ground-truth information and should not be used by default.
+                restored_mean = cv2.cvtColor(restored_image, cv2.COLOR_RGB2GRAY).mean()
+                target_mean = cv2.cvtColor(target, cv2.COLOR_RGB2GRAY).mean()
+                restored_image = np.clip(restored_image * target_mean /
+                                         max(restored_mean, 1e-12), 0, 1)
+                restored = torch.from_numpy(restored_image).permute(2, 0, 1).unsqueeze(0).to(device)
+
+            psnr_values.append(utils.PSNR(target, restored_image))
+            ssim_values.append(utils.calculate_ssim(
+                (target * 255).round().astype(np.uint8),
+                (restored_image * 255).round().astype(np.uint8)))
+            lpips_values.append(float(lpips_metric(
+                restored * 2 - 1, target_tensor * 2 - 1).mean().item()))
+
+            save_path = os.path.join(enhanced_root, relative_path)
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            utils.save_img(save_path, (restored_image * 255).round().astype(np.uint8))
             torch.cuda.empty_cache()
 
-            input_ = data_batch['lq']
-            input_save = data_batch['lq'].cpu().permute(
-                0, 2, 3, 1).squeeze(0).numpy()
-            target = data_batch['gt'].cpu().permute(
-                0, 2, 3, 1).squeeze(0).numpy()
-            inp_path = data_batch['lq_path'][0]
+    averages = {
+        'psnr': float(np.mean(psnr_values)),
+        'ssim': float(np.mean(ssim_values)),
+        'lpips': float(np.mean(lpips_values)),
+    }
+    metric_path = os.path.join(result_root, 'metric.csv')
+    with open(metric_path, 'w', newline='', encoding='utf-8') as file:
+        columns = [
+            'dataset', 'psnr', 'ssim', 'lpips', 'lpips_backbone', 'params_m',
+            'tflops_g', 'input_size', 'checkpoint', 'enhanced_images',
+            'complexity_tool', 'complexity_note'
+        ]
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow({
+            'dataset': args.dataset,
+            **averages,
+            'lpips_backbone': args.lpips_net,
+            'params_m': f"{complexity['params_m']:.6f}",
+            'tflops_g': f"{complexity['tflops_g']:.6f}",
+            'input_size': complexity['input_size'],
+            'checkpoint': _display_path(args.weights),
+            'enhanced_images': _display_path(enhanced_root),
+            'complexity_tool': complexity['complexity_tool'],
+            'complexity_note': complexity['complexity_note'],
+        })
 
-            # Padding in case images are not multiples of 4
-            h, w = input_.shape[2], input_.shape[3]
-            H, W = ((h + factor) // factor) * \
-                factor, ((w + factor) // factor) * factor
-            padh = H - h if h % factor != 0 else 0
-            padw = W - w if w % factor != 0 else 0
-            input_ = F.pad(input_, (0, padw, 0, padh), 'reflect')
+    write_test_log(os.path.join(result_root, 'test.log'), args, lq_root,
+                   gt_root, enhanced_root, {**averages, **complexity})
+    print(f"PSNR: {averages['psnr']:.6f}")
+    print(f"SSIM: {averages['ssim']:.6f}")
+    print(f"LPIPS ({args.lpips_net}): {averages['lpips']:.6f}")
+    print(f"Params(M): {complexity['params_m']:.6f}")
+    print(f"TFLOPs(G): {complexity['tflops_g']:.6f}")
+    print(f'Enhanced images: {enhanced_root}')
+    print(f'Metrics: {metric_path}')
 
-            if args.self_ensemble:
-                restored = self_ensemble(input_, model_restoration)
-            else:
-                restored = model_restoration(input_)
 
-            # Unpad images to original dimensions
-            restored = restored[:, :, :h, :w]
-
-            restored = torch.clamp(restored, 0, 1).cpu(
-            ).detach().permute(0, 2, 3, 1).squeeze(0).numpy()
-
-            if args.GT_mean:
-                # This test setting is the same as KinD, LLFlow, and recent diffusion models
-                # Please refer to Line 73 (https://github.com/zhangyhuaee/KinD/blob/master/evaluate_LOLdataset.py)
-                mean_restored = cv2.cvtColor(restored.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
-                mean_target = cv2.cvtColor(target.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
-                restored = np.clip(restored * (mean_target / mean_restored), 0, 1)
-
-            psnr.append(utils.PSNR(target, restored))
-            ssim.append(utils.calculate_ssim(
-                img_as_ubyte(target), img_as_ubyte(restored)))
-            type_id = os.path.dirname(inp_path).split('/')[-1]
-            os.makedirs(os.path.join(result_dir, type_id), exist_ok=True)
-            os.makedirs(os.path.join(result_dir_input, type_id), exist_ok=True)
-            os.makedirs(os.path.join(result_dir_gt, type_id), exist_ok=True)
-            utils.save_img((os.path.join(result_dir, type_id, os.path.splitext(
-                os.path.split(inp_path)[-1])[0] + '.png')), img_as_ubyte(restored))
-            utils.save_img((os.path.join(result_dir_input, type_id, os.path.splitext(
-                os.path.split(inp_path)[-1])[0] + '.png')), img_as_ubyte(input_save))
-            utils.save_img((os.path.join(result_dir_gt, type_id, os.path.splitext(
-                os.path.split(inp_path)[-1])[0] + '.png')), img_as_ubyte(target))
-else:
-
-    input_dir = opt['datasets']['val']['dataroot_lq']
-    target_dir = opt['datasets']['val']['dataroot_gt']
-    print(input_dir)
-    print(target_dir)
-
-    input_paths = natsorted(
-        glob(os.path.join(input_dir, '*.png')) + glob(os.path.join(input_dir, '*.jpg')))
-
-    target_paths = natsorted(glob(os.path.join(
-        target_dir, '*.png')) + glob(os.path.join(target_dir, '*.jpg')))
-
-    with torch.inference_mode():
-        for inp_path, tar_path in tqdm(zip(input_paths, target_paths), total=len(target_paths)):
-
-            torch.cuda.ipc_collect()
-            torch.cuda.empty_cache()
-
-            img = np.float32(utils.load_img(inp_path)) / 255.
-            target = np.float32(utils.load_img(tar_path)) / 255.
-
-            img = torch.from_numpy(img).permute(2, 0, 1)
-            input_ = img.unsqueeze(0).cuda()
-
-            # Padding in case images are not multiples of 4
-            b, c, h, w = input_.shape
-            H, W = ((h + factor) // factor) * \
-                factor, ((w + factor) // factor) * factor
-            padh = H - h if h % factor != 0 else 0
-            padw = W - w if w % factor != 0 else 0
-            input_ = F.pad(input_, (0, padw, 0, padh), 'reflect')
-
-            if h < 3000 and w < 3000:
-                if args.self_ensemble:
-                    restored = self_ensemble(input_, model_restoration)
-                else:
-                    restored = model_restoration(input_)
-            else:
-                # split and test
-                input_1 = input_[:, :, :, 1::2]
-                input_2 = input_[:, :, :, 0::2]
-                if args.self_ensemble:
-                    restored_1 = self_ensemble(input_1, model_restoration)
-                    restored_2 = self_ensemble(input_2, model_restoration)
-                else:
-                    restored_1 = model_restoration(input_1)
-                    restored_2 = model_restoration(input_2)
-                restored = torch.zeros_like(input_)
-                restored[:, :, :, 1::2] = restored_1
-                restored[:, :, :, 0::2] = restored_2
-
-            # Unpad images to original dimensions
-            restored = restored[:, :, :h, :w]
-
-            restored = torch.clamp(restored, 0, 1).cpu(
-            ).detach().permute(0, 2, 3, 1).squeeze(0).numpy()
-
-            if args.GT_mean:
-                # This test setting is the same as KinD, LLFlow, and recent diffusion models
-                # Please refer to Line 73 (https://github.com/zhangyhuaee/KinD/blob/master/evaluate_LOLdataset.py)
-                mean_restored = cv2.cvtColor(restored.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
-                mean_target = cv2.cvtColor(target.astype(np.float32), cv2.COLOR_BGR2GRAY).mean()
-                restored = np.clip(restored * (mean_target / mean_restored), 0, 1)
-
-            psnr.append(utils.PSNR(target, restored))
-            ssim.append(utils.calculate_ssim(
-                img_as_ubyte(target), img_as_ubyte(restored)))
-            if output_dir != '':
-                utils.save_img((os.path.join(output_dir, os.path.splitext(
-                    os.path.split(inp_path)[-1])[0] + '.png')), img_as_ubyte(restored))
-            else:
-                utils.save_img((os.path.join(result_dir, os.path.splitext(
-                    os.path.split(inp_path)[-1])[0] + '.png')), img_as_ubyte(restored))
-
-psnr = np.mean(np.array(psnr))
-ssim = np.mean(np.array(ssim))
-print("PSNR: %f " % (psnr))
-print("SSIM: %f " % (ssim))
+if __name__ == '__main__':
+    main()

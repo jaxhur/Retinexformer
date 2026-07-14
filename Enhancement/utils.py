@@ -8,6 +8,7 @@ import numpy as np
 import os
 import cv2
 import math
+import torch
 from pdb import set_trace as stx
 
 
@@ -123,11 +124,55 @@ def visualization(feature, save_path, type='max', colormap=cv2.COLORMAP_JET):
     # stx()
     cv2.imwrite(save_path, color_feat)
 
-def my_summary(test_model, H = 256, W = 256, C = 3, N = 1):
-    model = test_model.cuda()
-    print(model)
-    inputs = torch.randn((N, C, H, W)).cuda()
-    flops = FlopCountAnalysis(model,inputs)
-    n_param = sum([p.nelement() for p in model.parameters()])
-    print(f'GMac:{flops.total()/(1024*1024*1024)}')
-    print(f'Params:{n_param}')
+def model_complexity(test_model, H=256, W=256, C=3, N=1):
+    """Return Params(M) and THOP operations in G for one model forward pass.
+
+    Args:
+        test_model (torch.nn.Module): Model to analyse. DataParallel is
+            unwrapped before profiling.
+        H, W, C, N (int): Dummy input height, width, channels and batch size.
+
+    Returns:
+        dict: Parameters, THOP operations and their reporting metadata.
+
+    Raises:
+        ImportError: If the optional ``thop`` package is not installed.
+    """
+    try:
+        from thop import profile
+    except ImportError as exc:
+        raise ImportError(
+            'Model complexity requires thop. Install it with "pip install thop".'
+        ) from exc
+
+    model = test_model.module if hasattr(test_model, 'module') else test_model
+    device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+    inputs = torch.randn((N, C, H, W), device=device)
+    with torch.no_grad():
+        operations, _ = profile(model, inputs=(inputs,), verbose=False)
+    if was_training:
+        model.train()
+
+    params = sum(parameter.numel() for parameter in model.parameters())
+    return {
+        'params_m': params / 1e6,
+        # THOP's operation convention is recorded verbatim; no 2x MAC-to-FLOP
+        # conversion is silently applied.
+        'tflops_g': operations / 1e9,
+        'input_size': f'{N}x{C}x{H}x{W}',
+        'complexity_tool': 'thop.profile',
+        'complexity_note': 'THOP returned operations / 1e9; no 2x MAC conversion.'
+    }
+
+
+def my_summary(test_model, H=256, W=256, C=3, N=1):
+    """Print and return model complexity using the project-wide reporting rule."""
+    summary = model_complexity(test_model, H=H, W=W, C=C, N=N)
+    print(f"Params(M): {summary['params_m']:.4f}")
+    print(f"TFLOPs(G): {summary['tflops_g']:.4f}")
+    print(f"Input size: {summary['input_size']}")
+    print(f"Tool: {summary['complexity_tool']}")
+    print(summary['complexity_note'])
+    return summary
