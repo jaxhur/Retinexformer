@@ -2,17 +2,19 @@
 
 # Retinexformer原论文
 
+网络结构
+
 <img src="img/README_img/pipeline.png" alt="pipeline" style="zoom: 80%;" />
+
+原结果
 
 <img src="img/README_img/seven_results.png" alt="seven_results" style="zoom:80%;" />
 
 
 
-# 配置环境
+# 创建环境
 
-原项目：
-
-- 显卡要求：本项目使用PyTorch 1.11 + cu113，最多使用30系显卡，我使用5060ti报错
+原项目：PyTorch 1.11 + cu113，最多使用30系显卡
 
 ```shell
 conda create -n Retinexformer python=3.7 -y
@@ -160,35 +162,15 @@ my_summary(RetinexFormer(), 256, 256, 3, 1)
 
 &nbsp;
 
-# 训练
-
-
-
-```shell
-# activate the enviroment
-conda activate Retinexformer
-
-# LOL-v1
-python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v1.yml
-
-# LOL-v2-real
-
-
-# LOL-v2-synthetic
-python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml
-```
-
-
-
 
 
 # LOLv1
 
 训练：5080
 
-- 4h30min
-- ps=128
-- bs=8
+- 耗时：4h30min
+- batch_size = 8
+- patch_size =128
 
 ```
 python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v1.yml
@@ -196,23 +178,25 @@ python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v1.yml
 
 测试
 
+- PSNR：23.887855
+- SSIM：0.82384
+- LPIPS：0.155264257887999
+- 参数量(M)：1.605701
+- FLOPS(G)：17.018388
+
 ```
 # LOL-v1
 python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v1.yml --weights experiments/RetinexFormer_LOL_v1/models/best_G.pth --dataset LOL-v1
-
-# LOL-v2-synthetic
-python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml --weights experiments/RetinexFormer_LOL_v2_synthetic/models/best_G.pth --dataset LOL-v2-syn
-
 ```
 
 
 
 # LOLv2-real
 
-训练
+训练：5080
 
-- ps=128、bs=8竟然会爆显存？
-- 
+- batch_size = 8、patch_size =256会爆显存
+- batch_size = 4、patch_size =256，耗时9h
 
 ```
 python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_real.yml
@@ -231,9 +215,21 @@ python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_real
 
 训练
 
-测试
+- 5080，耗时5小时左右
 
 ```
+python3 basicsr/train.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml
+```
 
+测试
+
+- PSNR：23.887855
+- SSIM：0.82384
+- LPIPS：0.155264257887999
+- 参数量(M)：1.605701
+- FLOPS(G)：17.018388
+
+```
+python3 Enhancement/test_from_dataset.py --opt Options/RetinexFormer_LOL_v2_synthetic.yml --weights experiments/RetinexFormer_LOL_v2_synthetic/models/best_G.pth --dataset LOL-v2-syn
 ```
 
